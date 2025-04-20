@@ -1,9 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import time
 from ui.components.camera_frame import CameraFrame
 from services.face_service import FaceService
-from models.attendance import mark_attendance
-import time
+from models.database import mark_attendance
 
 class MarkView(ttk.Frame):
     def __init__(self, parent):
@@ -14,7 +14,7 @@ class MarkView(ttk.Frame):
         self._setup_ui()
         
     def _setup_ui(self):
-        """Initialize all UI components"""
+        """Initialize UI components"""
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         
@@ -43,7 +43,7 @@ class MarkView(ttk.Frame):
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(0, weight=1)
         
-        # Camera frame with card styling
+        # Camera frame
         cam_card = ttk.Frame(content, style="Card.TFrame", padding=10)
         cam_card.grid(row=0, column=0, sticky="nsew", pady=(0, 15))
         cam_card.grid_columnconfigure(0, weight=1)
@@ -73,7 +73,7 @@ class MarkView(ttk.Frame):
         )
         self.stop_btn.pack(side="left")
         
-        # Recent attendance card
+        # Recent attendance list
         recent_card = ttk.Frame(content, style="Card.TFrame", padding=15)
         recent_card.grid(row=2, column=0, sticky="ew")
         
@@ -83,36 +83,24 @@ class MarkView(ttk.Frame):
             style="CardTitle.TLabel"
         ).pack(anchor="w", pady=(0, 10))
         
-        # Recent attendance list
         self.recent_list = ttk.Treeview(
             recent_card,
-            columns=("name", "time"),
+            columns=("roll_number", "name", "time"),
             show="headings",
             height=4
         )
+        self.recent_list.heading("roll_number", text="Roll Number")
         self.recent_list.heading("name", text="Name")
         self.recent_list.heading("time", text="Time")
+        self.recent_list.column("roll_number", width=100, anchor="w")
         self.recent_list.column("name", width=150, anchor="w")
-        self.recent_list.column("time", width=200, anchor="w")
+        self.recent_list.column("time", width=120, anchor="w")
         self.recent_list.pack(fill="x")
-        
-        # Success animation label
-        self.success_label = ttk.Label(
-            self,
-            style="Success.TLabel",
-            text=""
-        )
-        
+    
     def start_scanning(self):
         """Start the attendance marking process"""
         if not self.camera.start_camera():
-            messagebox.showerror(
-                "Camera Error", 
-                "Could not access camera.\n"
-                "1. Make sure camera is connected\n"
-                "2. Check if another app is using the camera\n"
-                "3. Verify camera permissions"
-            )
+            messagebox.showerror("Error", "Could not start camera")
             return
             
         self.start_btn.config(state="disabled")
@@ -126,7 +114,7 @@ class MarkView(ttk.Frame):
         self.stop_btn.config(state="disabled")
         self.camera.stop_camera()
         self.status_var.set("Ready")
-        
+    
     def _update_attendance(self):
         """Continuously check for faces and mark attendance"""
         if self.stop_btn["state"] == "disabled":
@@ -137,17 +125,16 @@ class MarkView(ttk.Frame):
         
         if frame is not None:
             try:
-                locations, names = self.face_service.recognize_faces(frame)
+                locations, roll_numbers, names = self.face_service.recognize_faces(frame)
                 
-                for i, name in enumerate(names):
-                    if name != "Unknown":
-                        # Check cooldown period
+                for i, roll_number in enumerate(roll_numbers):
+                    if roll_number != "Unknown":
                         if current_time - self.last_attendance_time > self.attendance_cooldown:
-                            mark_attendance(name)
+                            mark_attendance(roll_number, names[i])
                             self.last_attendance_time = current_time
-                            self._show_success(name)
-                            self._update_recent_list(name)
-                            break  # Only mark one person per frame
+                            self._show_success(names[i])
+                            self._update_recent_list(roll_number, names[i])
+                            break
             except Exception as e:
                 print(f"Recognition error: {str(e)}")
         
@@ -155,43 +142,16 @@ class MarkView(ttk.Frame):
     
     def _show_success(self, name):
         """Show success animation"""
-        self.success_label.config(text=f"{name} marked ✓")
-        self.success_label.place(relx=0.5, rely=0.5, anchor="center")
-        self.success_label.lift()
-        
-        # Fade in
-        for i in range(0, 101, 10):
-            alpha = i/100
-            self.success_label.config(foreground=self._interpolate_color(
-                "#A3BE8C", alpha
-            ))
-            self.update()
-            self.after(20)
-        
-        # Hold and fade out
-        self.after(800)
-        for i in range(100, -1, -10):
-            alpha = i/100
-            self.success_label.config(foreground=self._interpolate_color(
-                "#A3BE8C", alpha
-            ))
-            self.update()
-            self.after(20)
-        
-        self.success_label.place_forget()
+        self.status_var.set(f"{name} marked present")
+        self.after(2000, lambda: self.status_var.set("Scanning for faces..."))
     
-    def _interpolate_color(self, hex_color, alpha):
-        """Helper for color animation"""
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
-        return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}" if alpha == 1 else \
-               f"#{int(rgb[0]*alpha):02x}{int(rgb[1]*alpha):02x}{int(rgb[2]*alpha):02x}"
-    
-    def _update_recent_list(self, name):
+    def _update_recent_list(self, roll_number, name):
         """Update the recent attendance list"""
-        self.recent_list.insert("", 0, values=(name, time.strftime("%Y-%m-%d %H:%M:%S")))
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.recent_list.insert("", 0, values=(roll_number, name, timestamp))
         if len(self.recent_list.get_children()) > 5:
             self.recent_list.delete(self.recent_list.get_children()[-1])
     
     def stop_camera(self):
-        """Stop the camera when closing"""
+        """Clean up camera resources"""
         self.stop_scanning()
