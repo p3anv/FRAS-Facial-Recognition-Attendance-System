@@ -5,7 +5,7 @@ from ui.views.mark_view import MarkView
 from ui.views.records_view import RecordsView
 from ui.styles import configure_styles, get_colors
 from models.database import init_db
-from models.database import init_db
+
 
 class AttendanceApp(tk.Tk):
     def __init__(self):
